@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <title>TrackPad Remote</title>
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#e8ff00"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="TrackPad"/>
+  <link rel="apple-touch-icon" href="logo.svg"/>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0c0c0c;
+      --surface:  #141414;
+      --border:   #222;
+      --accent:   #e8ff00;
+      --accent2:  #00ffc8;
+      --muted:    #444;
+      --text:     #f0f0f0;
+      --text-dim: #666;
+      --danger:   #ff4545;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bot: env(safe-area-inset-bottom, 0px);
+    }
+
+    html, body {
+      height: 100%; width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      overflow: hidden;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* ── SCREENS ── */
+    .screen {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      transition: opacity 0.3s, transform 0.3s;
+      padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bot) + 24px);
+    }
+    .screen.hidden { opacity: 0; pointer-events: none; transform: scale(0.96); }
+
+    /* ── CONNECT SCREEN ── */
+    #screen-connect {
+      gap: 32px;
+    }
+    .logo-mark {
+      width: 64px; height: 64px;
+      border: 2px solid var(--accent);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .logo-mark::after {
+      content: '';
+      position: absolute; inset: 6px;
+      border: 1.5px solid var(--muted);
+      border-radius: 8px;
+    }
+    .logo-dot {
+      width: 8px; height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -60%);
+    }
+    .app-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 22px; font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .app-title span { color: var(--accent); }
+
+    .connect-box {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 28px 24px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+    .connect-label {
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .code-input-row {
+      display: flex; gap: 10px;
+    }
+    .code-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 6px;
+      text-align: center;
+      text-transform: uppercase;
+      padding: 14px 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .code-input:focus { border-color: var(--accent); }
+    .code-input::placeholder { color: var(--muted); letter-spacing: 4px; font-size: 20px; }
+
+    .btn {
+      width: 100%;
+      padding: 16px;
+      border: none; border-radius: 12px;
+      font-family: 'Syne', sans-serif;
+      font-size: 15px; font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+    .btn-primary:active { transform: scale(0.97); background: #c8dd00; }
+    .btn-primary:disabled { opacity: 0.4; }
+
+    .status-pill {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px;
+      border-radius: 100px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+      align-self: center;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background 0.3s;
+    }
+    .status-dot.connecting { background: #ffaa00; animation: blink 1s infinite; }
+    .status-dot.connected  { background: var(--accent2); }
+    .status-dot.error      { background: var(--danger); }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── TRACKPAD SCREEN ── */
+    #screen-pad {
+      padding: 0;
+      flex-direction: column;
+    }
+
+    .pad-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: calc(var(--safe-top) + 12px) 20px 12px;
+      flex-shrink: 0;
+    }
+    .pad-connected-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--accent2);
+      letter-spacing: 1px;
+    }
+    .pad-connected-badge::before {
+      content: '';
+      width: 6px; height: 6px;
+      background: var(--accent2);
+      border-radius: 50%;
+    }
+    .btn-disconnect {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      padding: 6px 12px;
+      cursor: pointer;
+      letter-spacing: 1px;
+    }
+    .btn-disconnect:active { border-color: var(--danger); color: var(--danger); }
+
+    /* The actual touch surface */
+    #touchpad {
+      flex: 1;
+      width: 100%;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+      cursor: none;
+    }
+
+    .ripple {
+      position: absolute;
+      border-radius: 50%;
+      width: 40px; height: 40px;
+      background: var(--accent);
+      opacity: 0.3;
+      transform: translate(-50%, -50%) scale(0);
+      pointer-events: none;
+      animation: ripple-out 0.4s ease-out forwards;
+    }
+    @keyframes ripple-out {
+      to { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
+    }
+
+    .touch-guide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px;
+      pointer-events: none;
+      opacity: 0.12;
+      transition: opacity 0.4s;
+    }
+    .touch-guide.active { opacity: 0; }
+    .touch-guide-icon {
+      font-size: 40px;
+    }
+    .touch-guide-text {
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    /* Click buttons */
+    .click-bar {
+      display: flex;
+      flex-shrink: 0;
+      height: 72px;
+      padding-bottom: var(--safe-bot);
+    }
+    .click-btn {
+      flex: 1;
+      border: none;
+      background: var(--surface);
+      color: var(--text-dim);
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      position: relative;
+      overflow: hidden;
+    }
+    .click-btn:first-child {
+      border-right: 1px solid var(--border);
+    }
+    .click-btn.flash {
+      background: var(--accent);
+      color: #000;
+    }
+
+    /* Scroll indicator overlay */
+    .scroll-indicator {
+      position: absolute;
+      top: 12px; right: 12px;
+      width: 28px; height: 28px;
+      border: 1.5px solid var(--muted);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .scroll-indicator.visible { opacity: 1; }
+    .scroll-indicator::before {
+      content: '';
+      width: 0; height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+    }
+    .scroll-indicator.up::before   { border-bottom: 7px solid var(--accent); }
+    .scroll-indicator.down::before { border-top:    7px solid var(--accent); margin-top: 2px; }
+
+    /* Error toast */
+    .toast {
+      position: fixed;
+      bottom: calc(var(--safe-bot) + 80px);
+      left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--danger);
+      color: #fff;
+      font-size: 13px;
+      padding: 10px 20px;
+      border-radius: 100px;
+      opacity: 0;
+      transition: all 0.3s;
+      white-space: nowrap;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- ── CONNECT SCREEN ── -->
+<div class="screen" id="screen-connect">
+  <div class="logo-mark"><div class="logo-dot"></div></div>
+  <div class="app-title">Track<span>Pad</span></div>
+
+  <div class="connect-box">
+    <div class="connect-label">Enter session code</div>
+    <div class="code-input-row">
+      <input class="code-input" id="code-input" type="text"
+             maxlength="4" placeholder="A1B2"
+             autocomplete="off" autocorrect="off" spellcheck="false"/>
+    </div>
+    <button class="btn btn-primary" id="btn-connect" disabled>Connect</button>
+  </div>
+
+  <div class="status-pill">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">Waiting for code</span>
+  </div>
+</div>
+
+<!-- ── TRACKPAD SCREEN ── -->
+<div class="screen hidden" id="screen-pad">
+  <div class="pad-header">
+    <div class="pad-connected-badge">CONNECTED</div>
+    <button class="btn-disconnect" id="btn-disconnect">✕ Disconnect</button>
+  </div>
+
+  <div id="touchpad">
+    <div class="touch-guide" id="touch-guide">
+      <div class="touch-guide-icon">☝</div>
+      <div class="touch-guide-text">Slide to move · 2 fingers to scroll</div>
+    </div>
+    <div class="scroll-indicator" id="scroll-ind"></div>
+  </div>
+
+  <div class="click-bar">
+    <button class="click-btn" id="btn-left">Left</button>
+    <button class="click-btn" id="btn-right">Right</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- PeerJS from CDN -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+// ── Register SW ──
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ── State ──
+let peer = null;
+let conn = null;
+let lastX = null, lastY = null;
+let isTwoFinger = false;
+let touchGuideActive = false;
+
+// ── DOM ──
+const screenConnect = document.getElementById('screen-connect');
+const screenPad     = document.getElementById('screen-pad');
+const codeInput     = document.getElementById('code-input');
+const btnConnect    = document.getElementById('btn-connect');
+const statusDot     = document.getElementById('status-dot');
+const statusText    = document.getElementById('status-text');
+const touchpad      = document.getElementById('touchpad');
+const touchGuide    = document.getElementById('touch-guide');
+const btnLeft       = document.getElementById('btn-left');
+const btnRight      = document.getElementById('btn-right');
+const btnDisconnect = document.getElementById('btn-disconnect');
+const scrollInd     = document.getElementById('scroll-ind');
+const toast         = document.getElementById('toast');
+
+// ── UI helpers ──
+function setStatus(state, text) {
+  statusDot.className = 'status-dot ' + state;
+  statusText.textContent = text;
+}
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+function showScreen(name) {
+  screenConnect.classList.toggle('hidden', name !== 'connect');
+  screenPad.classList.toggle('hidden', name !== 'pad');
+}
+
+function flashBtn(el) {
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 120);
+}
+
+// ── Code input ──
+codeInput.addEventListener('input', () => {
+  const val = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  codeInput.value = val;
+  btnConnect.disabled = val.length < 4;
+});
+
+// ── Connect ──
+btnConnect.addEventListener('click', connectToPeer);
+codeInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !btnConnect.disabled) connectToPeer();
+});
+
+function connectToPeer() {
+  const code = codeInput.value.toUpperCase();
+  if (code.length < 4) return;
+
+  setStatus('connecting', 'Initializing...');
+  btnConnect.disabled = true;
+
+  // Create anonymous peer
+  peer = new Peer(undefined, {
+    host: '0.peerjs.com',
+    port: 443,
+    path: '/',
+    secure: true
+  });
+
+  peer.on('open', () => {
+    setStatus('connecting', 'Connecting to Mac...');
+    // Mac host peer id = "trackpad-" + code
+    conn = peer.connect('trackpad-' + code, { reliable: false });
+
+    conn.on('open', () => {
+      setStatus('connected', 'Connected');
+      showScreen('pad');
+    });
+
+    conn.on('error', err => {
+      setStatus('error', 'Connection failed');
+      showToast('Could not connect — check code');
+      btnConnect.disabled = false;
+    });
+
+    conn.on('close', () => {
+      showToast('Connection lost');
+      disconnect();
+    });
+  });
+
+  peer.on('error', err => {
+    setStatus('error', 'PeerJS error');
+    showToast('Network error: ' + err.type);
+    btnConnect.disabled = false;
+  });
+}
+
+function disconnect() {
+  if (conn) { conn.close(); conn = null; }
+  if (peer) { peer.destroy(); peer = null; }
+  setStatus('', 'Waiting for code');
+  showScreen('connect');
+  btnConnect.disabled = false;
+}
+
+btnDisconnect.addEventListener('click', disconnect);
+
+// ── Send helper ──
+function send(obj) {
+  if (conn && conn.open) {
+    try { conn.send(obj); } catch(e) {}
+  }
+}
+
+// ── Touch tracking ──
+touchpad.addEventListener('touchstart', onTouchStart, { passive: false });
+touchpad.addEventListener('touchmove',  onTouchMove,  { passive: false });
+touchpad.addEventListener('touchend',   onTouchEnd,   { passive: false });
+
+function onTouchStart(e) {
+  e.preventDefault();
+  if (!touchGuideActive) { touchGuide.classList.add('active'); touchGuideActive = true; }
+
+  if (e.touches.length === 1) {
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    isTwoFinger = false;
+  } else if (e.touches.length === 2) {
+    lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    isTwoFinger = true;
+  }
+}
+
+function onTouchMove(e) {
+  e.preventDefault();
+
+  if (e.touches.length === 2) {
+    const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const dy = cy - lastY;
+    lastY = cy;
+    isTwoFinger = true;
+
+    // Scroll indicator
+    scrollInd.className = 'scroll-indicator visible ' + (dy < 0 ? 'up' : 'down');
+    clearTimeout(scrollInd._t);
+    scrollInd._t = setTimeout(() => scrollInd.className = 'scroll-indicator', 400);
+
+    send({ type: 'scroll', dy: dy });
+    return;
+  }
+
+  if (e.touches.length !== 1 || isTwoFinger) return;
+
+  const x = e.touches[0].clientX;
+  const y = e.touches[0].clientY;
+  const dx = x - lastX;
+  const dy = y - lastY;
+  lastX = x; lastY = y;
+
+  if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+    send({ type: 'move', dx, dy });
+  }
+}
+
+function onTouchEnd(e) {
+  e.preventDefault();
+  if (e.touches.length === 0) {
+    isTwoFinger = false;
+    lastX = null; lastY = null;
+  }
+}
+
+// ── Click buttons ──
+function doClick(button) {
+  // Spawn ripple
+  const el = button === 'left' ? btnLeft : btnRight;
+  flashBtn(el);
+  send({ type: 'click', button });
+}
+
+btnLeft.addEventListener('touchstart', e => {
+  e.preventDefault();
+  doClick('left');
+});
+btnRight.addEventListener('touchstart', e => {
+  e.preventDefault();
+  doClick('right');
+});
+
+// Double tap detection on touchpad for left double-click
+let lastTap = 0;
+touchpad.addEventListener('touchend', e => {
+  if (e.changedTouches.length === 1 && !isTwoFinger) {
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      // Double tap → spawn ripple + double click
+      const t = e.changedTouches[0];
+      const r = document.createElement('div');
+      r.className = 'ripple';
+      r.style.left = (t.clientX - touchpad.getBoundingClientRect().left) + 'px';
+      r.style.top  = (t.clientY - touchpad.getBoundingClientRect().top)  + 'px';
+      touchpad.appendChild(r);
+      r.addEventListener('animationend', () => r.remove());
+      send({ type: 'dblclick' });
+      lastTap = 0;
+    } else {
+      lastTap = now;
+    }
+  }
+}, { passive: false });
+
+// Keep screen awake via NoSleep trick
+document.addEventListener('touchstart', () => {
+  const v = document.createElement('video');
+  v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+  v.style.display = 'none';
+  document.body.appendChild(v);
+}, { once: true });
+</script>
+</body>
+</html>
