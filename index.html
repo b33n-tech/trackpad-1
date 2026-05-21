@@ -49,7 +49,6 @@
       align-items: center; justify-content: center;
       padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bot) + 24px);
     }
-    /* Hidden state: truly removed from layout and interaction */
     .screen.hidden {
       display: none !important;
     }
@@ -207,6 +206,8 @@
       position: relative;
       overflow: hidden;
       cursor: none;
+      /* Ensure touch-action none so browser doesn't intercept touches */
+      touch-action: none;
     }
 
     .ripple {
@@ -228,6 +229,7 @@
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
       gap: 10px;
+      /* pointer-events: none so the guide never blocks touches */
       pointer-events: none;
       opacity: 0.12;
       transition: opacity 0.4s;
@@ -368,9 +370,6 @@ if ('serviceWorker' in navigator) {
 // ── State ──
 let peer = null;
 let conn = null;
-let lastX = null, lastY = null;
-let isTwoFinger = false;
-let touchGuideActive = false;
 
 // ── DOM ──
 const screenConnect = document.getElementById('screen-connect');
@@ -399,16 +398,10 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2500);
 }
 
-/**
- * Switch between screens by toggling display directly.
- * Using display:none / display:flex is bulletproof — no opacity
- * or pointer-events tricks that can leave a screen "visible but hidden".
- */
 function showScreen(name) {
   if (name === 'pad') {
     screenConnect.style.display = 'none';
     screenPad.style.display     = 'flex';
-    // Also ensure the .hidden class is in sync
     screenConnect.classList.add('hidden');
     screenPad.classList.remove('hidden');
   } else {
@@ -444,7 +437,6 @@ function connectToPeer() {
   setStatus('connecting', 'Initializing...');
   btnConnect.disabled = true;
 
-  // Create anonymous peer
   peer = new Peer(undefined, {
     host: '0.peerjs.com',
     port: 443,
@@ -454,15 +446,14 @@ function connectToPeer() {
 
   peer.on('open', () => {
     setStatus('connecting', 'Connecting to Mac...');
-    // Mac host peer id = "trackpad-" + code
     conn = peer.connect('trackpad-' + code, { reliable: false });
 
     conn.on('open', () => {
       setStatus('connected', 'Connected');
-      showScreen('pad');   // ← switch to trackpad UI immediately
+      showScreen('pad');
     });
 
-    conn.on('error', err => {
+    conn.on('error', () => {
       setStatus('error', 'Connection failed');
       showToast('Could not connect — check code');
       btnConnect.disabled = false;
@@ -498,65 +489,142 @@ function send(obj) {
   }
 }
 
-// ── Touch tracking ──
-touchpad.addEventListener('touchstart', onTouchStart, { passive: false });
-touchpad.addEventListener('touchmove',  onTouchMove,  { passive: false });
-touchpad.addEventListener('touchend',   onTouchEnd,   { passive: false });
+// ═══════════════════════════════════════════════════════════════
+// ── TOUCH TRACKING — rewritten for reliable mobile behaviour ──
+// ═══════════════════════════════════════════════════════════════
 
-function onTouchStart(e) {
+// Tracking state, reset on every new gesture
+let tp = {
+  active:      false,   // a touch gesture is in progress
+  twoFinger:   false,   // current gesture is two-finger scroll
+  lastX:       0,
+  lastY:       0,
+  guideHidden: false,
+};
+
+// Helper: hide the "slide to move" guide on first touch
+function hideGuide() {
+  if (!tp.guideHidden) {
+    touchGuide.classList.add('active');
+    tp.guideHidden = true;
+  }
+}
+
+// ── touchstart ──────────────────────────────────────────────
+touchpad.addEventListener('touchstart', function(e) {
+  // Stop the browser from scrolling the page or firing mouse events
   e.preventDefault();
-  if (!touchGuideActive) { touchGuide.classList.add('active'); touchGuideActive = true; }
+
+  hideGuide();
 
   if (e.touches.length === 1) {
-    lastX = e.touches[0].clientX;
-    lastY = e.touches[0].clientY;
-    isTwoFinger = false;
-  } else if (e.touches.length === 2) {
-    lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    isTwoFinger = true;
-  }
-}
+    // Single finger: record starting position
+    tp.active    = true;
+    tp.twoFinger = false;
+    tp.lastX     = e.touches[0].clientX;
+    tp.lastY     = e.touches[0].clientY;
 
-function onTouchMove(e) {
+  } else if (e.touches.length === 2) {
+    // Two fingers: switch to scroll mode, track vertical mid-point
+    tp.active    = true;
+    tp.twoFinger = true;
+    tp.lastY     = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+  }
+}, { passive: false });
+
+// ── touchmove ───────────────────────────────────────────────
+touchpad.addEventListener('touchmove', function(e) {
+  // Must call preventDefault here to stop page jitter / scroll
   e.preventDefault();
+
+  if (!tp.active) return;
 
   if (e.touches.length === 2) {
-    const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    const dy = cy - lastY;
-    lastY = cy;
-    isTwoFinger = true;
+    // ── Two-finger scroll ──
+    tp.twoFinger = true;
 
-    // Scroll indicator
+    const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const dy   = midY - tp.lastY;
+    tp.lastY   = midY;
+
+    // Show scroll direction indicator
     scrollInd.className = 'scroll-indicator visible ' + (dy < 0 ? 'up' : 'down');
-    clearTimeout(scrollInd._t);
-    scrollInd._t = setTimeout(() => scrollInd.className = 'scroll-indicator', 400);
+    clearTimeout(scrollInd._hideTimer);
+    scrollInd._hideTimer = setTimeout(
+      () => { scrollInd.className = 'scroll-indicator'; }, 400
+    );
 
-    send({ type: 'scroll', dy: dy });
-    return;
+    send({ type: 'scroll', dy });
+
+  } else if (e.touches.length === 1 && !tp.twoFinger) {
+    // ── Single-finger move ──
+    const x  = e.touches[0].clientX;
+    const y  = e.touches[0].clientY;
+    const dx = x - tp.lastX;
+    const dy = y - tp.lastY;
+    tp.lastX = x;
+    tp.lastY = y;
+
+    // Only send if the finger actually moved (filters micro-jitter)
+    if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+      send({ type: 'move', dx, dy });
+    }
   }
+}, { passive: false });
 
-  if (e.touches.length !== 1 || isTwoFinger) return;
-
-  const x = e.touches[0].clientX;
-  const y = e.touches[0].clientY;
-  const dx = x - lastX;
-  const dy = y - lastY;
-  lastX = x; lastY = y;
-
-  if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
-    send({ type: 'move', dx, dy });
-  }
-}
-
+// ── touchend / touchcancel ───────────────────────────────────
 function onTouchEnd(e) {
   e.preventDefault();
+
+  // When ALL fingers are lifted, reset state completely
   if (e.touches.length === 0) {
-    isTwoFinger = false;
-    lastX = null; lastY = null;
+    tp.active    = false;
+    tp.twoFinger = false;
+    tp.lastX     = 0;
+    tp.lastY     = 0;
+  } else if (e.touches.length === 1) {
+    // Went from 2 fingers back to 1: reset so single-finger
+    // tracking doesn't jump from the old position
+    tp.twoFinger = false;
+    tp.lastX     = e.touches[0].clientX;
+    tp.lastY     = e.touches[0].clientY;
   }
 }
 
-// ── Click buttons ──
+touchpad.addEventListener('touchend',    onTouchEnd, { passive: false });
+touchpad.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+// ═══════════════════════════════════════════════════════════════
+// ── DOUBLE-TAP → double-click ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+let lastTapTime = 0;
+
+touchpad.addEventListener('touchend', function(e) {
+  // Only react to single-finger taps (not scroll gestures)
+  if (e.changedTouches.length === 1 && !tp.twoFinger) {
+    const now = Date.now();
+    if (now - lastTapTime < 300) {
+      // Double tap detected
+      const t    = e.changedTouches[0];
+      const rect = touchpad.getBoundingClientRect();
+      const r    = document.createElement('div');
+      r.className  = 'ripple';
+      r.style.left = (t.clientX - rect.left)  + 'px';
+      r.style.top  = (t.clientY - rect.top)   + 'px';
+      touchpad.appendChild(r);
+      r.addEventListener('animationend', () => r.remove());
+
+      send({ type: 'dblclick' });
+      lastTapTime = 0;           // reset so a 3rd tap doesn't re-trigger
+    } else {
+      lastTapTime = now;
+    }
+  }
+}, { passive: false });
+
+// ═══════════════════════════════════════════════════════════════
+// ── CLICK BUTTONS ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
 function doClick(button) {
   const el = button === 'left' ? btnLeft : btnRight;
   flashBtn(el);
@@ -566,38 +634,18 @@ function doClick(button) {
 btnLeft.addEventListener('touchstart', e => {
   e.preventDefault();
   doClick('left');
-});
+}, { passive: false });
+
 btnRight.addEventListener('touchstart', e => {
   e.preventDefault();
   doClick('right');
-});
-
-// Double tap detection on touchpad for left double-click
-let lastTap = 0;
-touchpad.addEventListener('touchend', e => {
-  if (e.changedTouches.length === 1 && !isTwoFinger) {
-    const now = Date.now();
-    if (now - lastTap < 300) {
-      // Double tap → spawn ripple + double click
-      const t = e.changedTouches[0];
-      const r = document.createElement('div');
-      r.className = 'ripple';
-      r.style.left = (t.clientX - touchpad.getBoundingClientRect().left) + 'px';
-      r.style.top  = (t.clientY - touchpad.getBoundingClientRect().top)  + 'px';
-      touchpad.appendChild(r);
-      r.addEventListener('animationend', () => r.remove());
-      send({ type: 'dblclick' });
-      lastTap = 0;
-    } else {
-      lastTap = now;
-    }
-  }
 }, { passive: false });
 
-// Keep screen awake via NoSleep trick
+// ── Keep screen awake (NoSleep trick) ──
 document.addEventListener('touchstart', () => {
   const v = document.createElement('video');
-  v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+  v.setAttribute('playsinline', '');
+  v.setAttribute('muted', '');
   v.style.display = 'none';
   document.body.appendChild(v);
 }, { once: true });
