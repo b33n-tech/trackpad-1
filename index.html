@@ -47,10 +47,12 @@
       position: absolute; inset: 0;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      transition: opacity 0.3s, transform 0.3s;
       padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bot) + 24px);
     }
-    .screen.hidden { opacity: 0; pointer-events: none; transform: scale(0.96); }
+    /* Hidden state: truly removed from layout and interaction */
+    .screen.hidden {
+      display: none !important;
+    }
 
     /* ── CONNECT SCREEN ── */
     #screen-connect {
@@ -397,9 +399,24 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2500);
 }
 
+/**
+ * Switch between screens by toggling display directly.
+ * Using display:none / display:flex is bulletproof — no opacity
+ * or pointer-events tricks that can leave a screen "visible but hidden".
+ */
 function showScreen(name) {
-  screenConnect.classList.toggle('hidden', name !== 'connect');
-  screenPad.classList.toggle('hidden', name !== 'pad');
+  if (name === 'pad') {
+    screenConnect.style.display = 'none';
+    screenPad.style.display     = 'flex';
+    // Also ensure the .hidden class is in sync
+    screenConnect.classList.add('hidden');
+    screenPad.classList.remove('hidden');
+  } else {
+    screenPad.style.display     = 'none';
+    screenConnect.style.display = 'flex';
+    screenPad.classList.add('hidden');
+    screenConnect.classList.remove('hidden');
+  }
 }
 
 function flashBtn(el) {
@@ -442,7 +459,7 @@ function connectToPeer() {
 
     conn.on('open', () => {
       setStatus('connected', 'Connected');
-      showScreen('pad');
+      showScreen('pad');   // ← switch to trackpad UI immediately
     });
 
     conn.on('error', err => {
@@ -541,7 +558,6 @@ function onTouchEnd(e) {
 
 // ── Click buttons ──
 function doClick(button) {
-  // Spawn ripple
   const el = button === 'left' ? btnLeft : btnRight;
   flashBtn(el);
   send({ type: 'click', button });
